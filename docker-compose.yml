@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: revenue_recovery_postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: revenue_recovery
+      POSTGRES_USER: revenue_agent
+      POSTGRES_PASSWORD: revenue_agent_dev
+
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:

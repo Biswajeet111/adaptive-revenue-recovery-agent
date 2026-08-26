@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Revenue Recovery Agent - Test Checkout</title>
+
+    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 80px auto;
+            padding: 20px;
+        }
+
+        button {
+            padding: 14px 24px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        #status {
+            margin-top: 20px;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>Adaptive Revenue Recovery Agent</h1>
+
+    <p>Razorpay Test Mode Checkout</p>
+
+    <p>
+        Test transaction amount:
+        <strong>₹100</strong>
+    </p>
+
+    <button id="pay-button">
+        Pay ₹100 Test
+    </button>
+
+    <div id="status"></div>
+
+    <script>
+        const button = document.getElementById("pay-button");
+        const status = document.getElementById("status");
+
+        button.addEventListener("click", async () => {
+            button.disabled = true;
+            status.textContent = "Creating Razorpay order...";
+
+            try {
+                const orderResponse = await fetch(
+                    "/api/v1/checkout/order",
+                    {
+                        method: "POST"
+                    }
+                );
+
+                if (!orderResponse.ok) {
+                    throw new Error(
+                        `Order creation failed: ${orderResponse.status}`
+                    );
+                }
+
+                const order = await orderResponse.json();
+
+                status.textContent =
+                    `Order created: ${order.order_id}\n` +
+                    "Opening Razorpay Checkout...";
+
+                const options = {
+                    key: order.key_id,
+
+                    amount: order.amount,
+                    currency: order.currency,
+
+                    name: "Adaptive Revenue Recovery Agent",
+                    description: "Test Payment",
+
+                    order_id: order.order_id,
+
+                    handler: function (response) {
+                        status.textContent =
+                            "Payment response received.\n\n" +
+                            JSON.stringify(
+                                response,
+                                null,
+                                2
+                            );
+                    },
+
+                    prefill: {
+                        name: "Test Customer",
+                        email: "test@example.com",
+                        contact: "+919999999999"
+                    },
+
+                    theme: {
+                        color: "#2563eb"
+                    },
+
+                    modal: {
+                        confirm_close: true
+                    }
+                };
+
+                const razorpay = new Razorpay(options);
+
+                razorpay.on(
+                    "payment.failed",
+                    function (response) {
+                        status.textContent =
+                            "Razorpay reported payment failure.\n\n" +
+                            JSON.stringify(
+                                response.error,
+                                null,
+                                2
+                            );
+                    }
+                );
+
+                razorpay.open();
+
+            } catch (error) {
+                status.textContent =
+                    "Error:\n" + error.message;
+
+                button.disabled = false;
+            }
+        });
+    </script>
+
+</body>
+
+</html>
