@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.models.transaction import Transaction
 from backend.app.models.webhook_event import WebhookEvent
+from backend.app.services.recovery_service import RecoveryService
 
 
 class WebhookService:
@@ -112,6 +113,12 @@ class WebhookService:
             transaction.failure_reason = payment.get(
                 "error_description"
             )
+
+            recovery_service = RecoveryService(self.db)
+
+            recovery_service.create_case_for_transaction(
+                transaction
+            )   
 
         elif event.event_type in {
             "payment.authorized",

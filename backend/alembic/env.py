@@ -7,6 +7,13 @@ from backend.app.config import settings
 from backend.app.database import Base
 from backend.app.models import AuditLog, Transaction, WebhookEvent
 
+from backend.app.models import (
+    AuditLog,
+    RecoveryAction,
+    RecoveryCase,
+    Transaction,
+    WebhookEvent,
+)
 
 config = context.config
 
