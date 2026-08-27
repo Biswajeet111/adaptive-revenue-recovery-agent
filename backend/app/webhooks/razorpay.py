@@ -96,7 +96,19 @@ async def razorpay_webhook(
             "payment.authorized",
             "payment.captured",
         }:
-            webhook_service.process_payment_event(event)
+            webhook_service.process_payment_event(
+                event
+            )
+
+        elif event_type in {
+            "payment_link.paid",
+            "payment_link.partially_paid",
+            "payment_link.expired",
+            "payment_link.cancelled",
+        }:
+            webhook_service.process_payment_link_event(
+                event
+            )
 
         db.commit()
 

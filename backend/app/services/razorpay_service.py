@@ -33,3 +33,33 @@ class RazorpayService:
 
     def fetch_order(self, order_id: str) -> dict:
         return self.client.order.fetch(order_id)
+
+    def create_payment_link(
+        self,
+        amount: int,
+        currency: str,
+        reference_id: str,
+        description: str,
+        expire_by: int,
+    ) -> dict:
+        payment_link_data = {
+            "amount": amount,
+            "currency": currency,
+            "accept_partial": False,
+            "expire_by": expire_by,
+            "reference_id": reference_id,
+            "description": description,
+            "reminder_enable": False,
+        }
+
+        return self.client.payment_link.create(
+            payment_link_data
+        )
+
+    def fetch_payment_link(
+        self,
+        payment_link_id: str,
+    ) -> dict:
+        return self.client.payment_link.fetch(
+            payment_link_id
+        )
