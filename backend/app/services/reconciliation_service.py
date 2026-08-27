@@ -23,6 +23,9 @@ class ReconciliationService:
         transaction: Transaction,
     ) -> bool:
 
+        if action.status == "successful":
+            return True
+
         if action.status != "executed":
             raise ValueError(
                 f"Recovery action {action.id} "

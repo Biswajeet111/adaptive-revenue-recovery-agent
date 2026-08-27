@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy.orm import Session
@@ -110,14 +111,25 @@ async def razorpay_webhook(
                 event
             )
 
+        elif event_type == "order.paid":
+            event.processed = True
+            event.processed_at = datetime.now(timezone.utc) 
+
         db.commit()
 
     except Exception as exc:
         db.rollback()
 
+        print(
+            f"WEBHOOK PROCESSING ERROR | "
+            f"event_id={event_id} | "
+            f"event_type={event_type} | "
+                f"error={type(exc).__name__}: {exc}"
+            )
+
         raise HTTPException(
             status_code=500,
-            detail=f"Webhook processing failed: {exc}",
+            detail="Webhook processing failed",
         )
 
     return {
