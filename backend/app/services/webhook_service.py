@@ -116,11 +116,20 @@ class WebhookService:
             )
 
         if transaction is None:
-            raise ValueError(
-                f"No transaction found for "
-                f"order_id={order_id}, "
-                f"payment_id={payment_id}"
+            # Razorpay Payment Links create their own
+            # underlying order/payment records.
+            # Those are reconciled through the
+            # payment_link.paid event, which maps
+            # the payment back to the original
+            # recovery action.
+            event.processed = True
+            event.processed_at = datetime.now(
+                timezone.utc
             )
+
+            self.db.flush()
+
+            return
 
         transaction.razorpay_payment_id = payment_id
         transaction.status = transaction_status
@@ -178,7 +187,9 @@ class WebhookService:
                 "Razorpay webhook payload"
             )
 
-        payment_link_id = payment_link.get("id")
+        payment_link_id = payment_link.get(
+            "id"
+        )
 
         if not payment_link_id:
             raise ValueError(
