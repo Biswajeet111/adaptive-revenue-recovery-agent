@@ -13,17 +13,29 @@ def main():
     db = SessionLocal()
 
     try:
+        # ---------------------------------------------------------
+        # Select the newest pending recovery action
+        # ---------------------------------------------------------
+
         action = db.scalar(
             select(RecoveryAction)
             .where(
                 RecoveryAction.status == "pending"
             )
-            .order_by(RecoveryAction.id.asc())
+            .order_by(
+                RecoveryAction.id.desc()
+            )
         )
 
         if action is None:
-            print("No pending recovery action found.")
+            print(
+                "No pending recovery action found."
+            )
             return
+
+        # ---------------------------------------------------------
+        # Load recovery case
+        # ---------------------------------------------------------
 
         recovery_case = db.scalar(
             select(RecoveryCase)
@@ -35,8 +47,13 @@ def main():
 
         if recovery_case is None:
             raise ValueError(
-                "Recovery case not found."
+                f"Recovery case {action.recovery_case_id} "
+                "not found."
             )
+
+        # ---------------------------------------------------------
+        # Load transaction
+        # ---------------------------------------------------------
 
         transaction = db.scalar(
             select(Transaction)
@@ -48,36 +65,142 @@ def main():
 
         if transaction is None:
             raise ValueError(
-                "Transaction not found."
+                f"Transaction "
+                f"{recovery_case.transaction_id} "
+                "not found."
             )
 
+        # ---------------------------------------------------------
+        # Display selected recovery target
+        # ---------------------------------------------------------
+
         print(
-            f"Executing recovery action "
-            f"{action.id} for transaction "
+            "=== RECOVERY ORCHESTRATOR ==="
+        )
+
+        print(
+            f"Transaction: "
             f"{transaction.id}"
         )
 
-        orchestrator = RecoveryOrchestrator(db)
+        print(
+            f"Razorpay Order ID: "
+            f"{transaction.razorpay_order_id}"
+        )
 
-        orchestrator.execute_action(
-            action=action,
-            recovery_case=recovery_case,
-            transaction=transaction,
+        print(
+            f"Recovery Case: "
+            f"{recovery_case.id}"
+        )
+
+        print(
+            f"Recovery Action: "
+            f"{action.id}"
+        )
+
+        print(
+            f"Action Type: "
+            f"{action.action_type}"
+        )
+
+        print(
+            f"Action Status: "
+            f"{action.status}"
+        )
+
+        print()
+
+        # ---------------------------------------------------------
+        # Safety confirmation
+        # ---------------------------------------------------------
+
+        if recovery_case.status in {
+            "recovered",
+            "closed",
+        }:
+            print(
+                "Recovery case is already in a "
+                f"terminal state: {recovery_case.status}"
+            )
+            return
+
+        if transaction.status in {
+            "captured",
+            "paid",
+            "successful",
+        }:
+            print(
+                "Transaction is already in a "
+                f"terminal payment state: "
+                f"{transaction.status}"
+            )
+            return
+
+        # ---------------------------------------------------------
+        # Execute orchestrator
+        # ---------------------------------------------------------
+
+        print(
+            "Starting AI recovery orchestration..."
+        )
+
+        orchestrator = RecoveryOrchestrator(
+            db=db,
+            dry_run=False,
+        )
+
+        executed_action = (
+            orchestrator.execute_action(
+                action=action,
+                recovery_case=recovery_case,
+                transaction=transaction,
+            )
         )
 
         db.commit()
 
+        # ---------------------------------------------------------
+        # Result
+        # ---------------------------------------------------------
+
+        print()
         print(
-            "Recovery orchestration completed."
+            "=== RECOVERY ORCHESTRATION COMPLETED ==="
         )
+
         print(
-            f"Action status: {action.status}"
+            f"Transaction: "
+            f"{transaction.id}"
         )
+
         print(
-            f"Result: {action.result}"
+            f"Recovery Case: "
+            f"{recovery_case.id}"
         )
+
         print(
-            f"Metadata: {action.metadata_json}"
+            f"Recovery Action: "
+            f"{executed_action.id}"
+        )
+
+        print(
+            f"Action Type: "
+            f"{executed_action.action_type}"
+        )
+
+        print(
+            f"Action Status: "
+            f"{executed_action.status}"
+        )
+
+        print(
+            f"Result: "
+            f"{executed_action.result}"
+        )
+
+        print(
+            f"Metadata: "
+            f"{executed_action.metadata_json}"
         )
 
     except Exception:

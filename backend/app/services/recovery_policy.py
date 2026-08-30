@@ -63,8 +63,13 @@ class RecoveryPolicy:
             )
 
         if (
-            "BAD_REQUEST_ERROR" in code
-            and "declined" in reason
+            "BANK_DECLINED" in code
+            or (
+                "BAD_REQUEST_ERROR" in code
+                and "declined" in reason
+            )
+            or "bank declined" in reason
+            or "declined by the issuing bank" in reason
         ):
             return RecoveryDecision(
                 classification="BANK_DECLINED",

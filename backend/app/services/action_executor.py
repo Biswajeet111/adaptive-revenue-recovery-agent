@@ -10,7 +10,14 @@ from backend.app.services.razorpay_service import RazorpayService
 
 class RecoveryActionExecutor:
 
-    def __init__(self, razorpay_service: RazorpayService):
+    SUPPORTED_ACTIONS = {
+        "alternative_payment_method",
+    }
+
+    def __init__(
+        self,
+        razorpay_service: RazorpayService,
+    ):
         self.razorpay = razorpay_service
 
     def execute(
@@ -25,7 +32,7 @@ class RecoveryActionExecutor:
                 f"Action {action.id} is not pending."
             )
 
-        if action.action_type != "alternative_payment_method":
+        if action.action_type not in self.SUPPORTED_ACTIONS:
             raise ValueError(
                 f"Unsupported action type: "
                 f"{action.action_type}"
@@ -62,6 +69,7 @@ class RecoveryActionExecutor:
             )
 
             action.status = "executed"
+
             action.executed_at = datetime.now(
                 timezone.utc
             )
@@ -73,20 +81,20 @@ class RecoveryActionExecutor:
             action.metadata_json = json.dumps(
                 {
                     "provider": "razorpay",
-                    "payment_link_id": payment_link.get(
-                        "id"
+                    "payment_link_id": (
+                        payment_link.get("id")
                     ),
-                    "short_url": payment_link.get(
-                        "short_url"
+                    "short_url": (
+                        payment_link.get("short_url")
                     ),
-                    "status": payment_link.get(
-                        "status"
+                    "status": (
+                        payment_link.get("status")
                     ),
-                    "reference_id": payment_link.get(
-                        "reference_id"
+                    "reference_id": (
+                        payment_link.get("reference_id")
                     ),
-                    "expire_by": payment_link.get(
-                        "expire_by"
+                    "expire_by": (
+                        payment_link.get("expire_by")
                     ),
                 }
             )

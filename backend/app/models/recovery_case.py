@@ -21,6 +21,16 @@ class RecoveryCase(Base):
         nullable=False,
         index=True,
     )
+    
+    failure_code: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    failure_reason: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
 
     classification: Mapped[str] = mapped_column(
         String(100),

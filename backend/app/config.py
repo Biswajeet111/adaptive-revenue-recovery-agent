@@ -10,6 +10,12 @@ class Settings(BaseSettings):
     razorpay_key_secret: str
     razorpay_webhook_secret: str
 
+    gemini_api_key: str
+    gemini_embedding_model: str = "gemini-embedding-001"
+
+    groq_api_key: str
+    groq_decision_model: str 
+
     model_config = SettingsConfigDict(
         env_file=".env",
         case_sensitive=False,
