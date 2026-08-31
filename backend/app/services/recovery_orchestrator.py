@@ -1,6 +1,6 @@
 import json
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from backend.app.models.audit_log import AuditLog
@@ -13,7 +13,9 @@ from backend.app.services.ai_recovery_service import AIRecoveryService
 from backend.app.services.decision_agent import RecoveryDecisionAgent
 from backend.app.services.decision_safety_gate import DecisionSafetyGate
 from backend.app.services.embedding_service import GeminiEmbeddingService
-from backend.app.services.policy_retrieval_service import PolicyRetrievalService
+from backend.app.services.policy_retrieval_service import (
+    PolicyRetrievalService,
+)
 from backend.app.services.razorpay_service import RazorpayService
 from backend.app.services.recovery_service import RecoveryService
 
@@ -40,12 +42,11 @@ class RecoveryOrchestrator:
               ↓
         Approved action
               ↓
+        Atomic action claim
+              ↓
         External execution
-
-    The orchestrator coordinates the workflow.
-
-    DecisionSafetyGate remains responsible for deciding
-    whether an AI recommendation is safe to execute.
+              ↓
+        Webhook / reconciliation
     """
 
     TERMINAL_CASE_STATES = {
@@ -305,11 +306,6 @@ class RecoveryOrchestrator:
                     {},
                 )
 
-                # ---------------------------------------------
-                # Verify that the stored decision belongs to
-                # the same transaction.
-                # ---------------------------------------------
-
                 same_transaction = (
                     str(
                         stored_context.get(
@@ -564,11 +560,8 @@ class RecoveryOrchestrator:
             return action
 
         # =====================================================
-        # 15. FINAL STATE CHECK BEFORE EXTERNAL EXECUTION
+        # 15. FINAL STATE CHECK BEFORE CLAIM
         # =====================================================
-
-        # The transaction may have changed while the AI
-        # decision was being generated.
 
         self.db.refresh(transaction)
         self.db.refresh(recovery_case)
@@ -627,20 +620,83 @@ class RecoveryOrchestrator:
             return action
 
         # =====================================================
-        # 17. EXECUTE APPROVED ACTION
+        # 17. ATOMIC ACTION CLAIM
         # =====================================================
 
-        executed_action = (
-            self.executor.execute(
-                action=action,
-                recovery_case=recovery_case,
-                transaction=transaction,
+        claimed = self._claim_action(
+            action
+        )
+
+        if not claimed:
+            print(
+                "Recovery action could not be claimed. "
+                f"Current status: {action.status}"
+            )
+
+            return action
+
+        # =====================================================
+        # 18. EXECUTE APPROVED ACTION
+        # =====================================================
+
+        try:
+            executed_action = (
+                self.executor.execute(
+                    action=action,
+                    recovery_case=recovery_case,
+                    transaction=transaction,
+                )
+            )
+
+            self.db.flush()
+
+            return executed_action
+
+        except Exception:
+            self.db.flush()
+            raise
+
+    # =========================================================
+    # ATOMIC ACTION CLAIM
+    # =========================================================
+
+    def _claim_action(
+        self,
+        action: RecoveryAction,
+    ) -> bool:
+        """
+        Atomically claim a pending recovery action.
+
+        Only one worker can successfully transition the
+        action from pending -> executing.
+        """
+
+        statement = (
+            update(RecoveryAction)
+            .where(
+                RecoveryAction.id == action.id
+            )
+            .where(
+                RecoveryAction.status == "pending"
+            )
+            .values(
+                status="executing"
             )
         )
 
-        self.db.flush()
+        result = self.db.execute(
+            statement
+        )
 
-        return executed_action
+        if result.rowcount != 1:
+            self.db.refresh(action)
+
+            return False
+
+        self.db.flush()
+        self.db.refresh(action)
+
+        return True
 
     # =========================================================
     # FIND OTHER ACTIVE ACTION

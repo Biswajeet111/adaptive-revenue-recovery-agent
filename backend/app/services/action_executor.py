@@ -27,10 +27,17 @@ class RecoveryActionExecutor:
         transaction: Transaction,
     ) -> RecoveryAction:
 
-        if action.status != "pending":
+        # The orchestrator must atomically claim the action
+        # before the executor is called.
+        if action.status != "executing":
             raise ValueError(
-                f"Action {action.id} is not pending."
+                f"Action {action.id} must be claimed "
+                f"before execution. Current status: "
+                f"{action.status}."
             )
+
+        if action.executed_at is not None:
+            return action
 
         if action.action_type not in self.SUPPORTED_ACTIONS:
             raise ValueError(
@@ -54,8 +61,6 @@ class RecoveryActionExecutor:
         expire_by = int(time.time()) + (
             24 * 60 * 60
         )
-
-        action.status = "executing"
 
         try:
             payment_link = (
