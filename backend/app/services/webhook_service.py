@@ -73,8 +73,7 @@ class WebhookService:
         statement = select(
             WebhookEvent
         ).where(
-            WebhookEvent.event_id
-            == event_id
+            WebhookEvent.event_id == event_id
         )
 
         return self.db.scalar(
@@ -89,6 +88,13 @@ class WebhookService:
         self,
         event: WebhookEvent,
     ) -> None:
+
+        # -----------------------------------------------------
+        # WEBHOOK EVENT IDEMPOTENCY
+        # -----------------------------------------------------
+
+        if event.processed:
+            return
 
         payload = json.loads(
             event.payload
@@ -187,19 +193,6 @@ class WebhookService:
         # -----------------------------------------------------
         # Payment Link underlying payment
         # -----------------------------------------------------
-        #
-        # A Razorpay Payment Link creates its own
-        # Razorpay order/payment.
-        #
-        # That order ID is NOT necessarily the original
-        # transaction's order ID.
-        #
-        # Therefore payment.authorized and
-        # payment.captured events for Payment Links
-        # are handled by payment_link.paid.
-        #
-        # Do not treat these as errors.
-        # -----------------------------------------------------
 
         if transaction is None:
 
@@ -291,6 +284,17 @@ class WebhookService:
         event: WebhookEvent,
     ) -> None:
 
+        # -----------------------------------------------------
+        # WEBHOOK EVENT IDEMPOTENCY
+        # -----------------------------------------------------
+
+        if event.processed:
+            return
+
+        # -----------------------------------------------------
+        # Parse payload
+        # -----------------------------------------------------
+
         payload = json.loads(
             event.payload
         )
@@ -317,8 +321,8 @@ class WebhookService:
                 "Razorpay webhook payload."
             )
 
-        payment_link_id = payment_link.get(
-            "id"
+        payment_link_id = (
+            payment_link.get("id")
         )
 
         if not payment_link_id:
@@ -330,15 +334,6 @@ class WebhookService:
 
         # -----------------------------------------------------
         # Payment entity
-        # -----------------------------------------------------
-        #
-        # payment_link.paid contains the actual captured
-        # payment inside:
-        #
-        # payload.payment.entity
-        #
-        # We pass this directly to reconciliation.
-        # This avoids another Razorpay API call.
         # -----------------------------------------------------
 
         payment = (
@@ -371,12 +366,7 @@ class WebhookService:
             )
 
         # -----------------------------------------------------
-        # IDEMPOTENCY
-        # -----------------------------------------------------
-        #
-        # If the recovery action has already succeeded,
-        # receiving payment_link.paid again must not
-        # create another recovery.
+        # Action-level idempotency
         # -----------------------------------------------------
 
         if action.status == "successful":
@@ -436,6 +426,16 @@ class WebhookService:
                 f"{recovery_case.id}."
             )
 
+        # -----------------------------------------------------
+        # Reconciliation service
+        # -----------------------------------------------------
+
+        reconciliation_service = (
+            ReconciliationService(
+                RazorpayService()
+            )
+        )
+
         # =====================================================
         # PAYMENT LINK PAID
         # =====================================================
@@ -449,11 +449,29 @@ class WebhookService:
                     "but payment entity is missing."
                 )
 
-            reconciliation_service = (
-                ReconciliationService(
-                    RazorpayService()
-                )
+            reconciliation_service.reconcile_payment_link(
+                action=action,
+                recovery_case=recovery_case,
+                transaction=transaction,
+                payment=payment,
+                payment_link=payment_link,
             )
+
+        # =====================================================
+        # PAYMENT LINK PARTIALLY PAID
+        # =====================================================
+
+        elif (
+            event.event_type
+            == "payment_link.partially_paid"
+        ):
+
+            if not payment:
+
+                raise ValueError(
+                    "Payment Link reports partial payment, "
+                    "but payment entity is missing."
+                )
 
             reconciliation_service.reconcile_payment_link(
                 action=action,
@@ -493,20 +511,6 @@ class WebhookService:
             action.result = (
                 "Razorpay Payment Link was "
                 "cancelled."
-            )
-
-        # =====================================================
-        # PAYMENT LINK PARTIALLY PAID
-        # =====================================================
-
-        elif (
-            event.event_type
-            == "payment_link.partially_paid"
-        ):
-
-            action.result = (
-                "Razorpay Payment Link was "
-                "partially paid."
             )
 
         # =====================================================

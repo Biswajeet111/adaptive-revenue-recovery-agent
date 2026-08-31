@@ -70,26 +70,10 @@ class ReconciliationService:
             )
 
         # -------------------------------------------------
-        # IF WEBHOOK PROVIDED PAYMENT DATA
-        # -------------------------------------------------
-        #
-        # payment_link.paid contains:
-        #
-        # payload.payment.entity
-        # payload.payment_link.entity
-        #
-        # This is the authoritative webhook payload.
-        #
-        # Avoid an unnecessary Razorpay API call.
+        # WEBHOOK PAYMENT DATA
         # -------------------------------------------------
 
         if payment is not None:
-
-            if payment.get("status") != "captured":
-                raise ValueError(
-                    "Payment Link reported paid, "
-                    "but webhook payment is not captured."
-                )
 
             if payment_link is None:
                 payment_link = {
@@ -100,20 +84,52 @@ class ReconciliationService:
                     ),
                 }
 
-            return self._process_successful_recovery(
-                action=action,
-                recovery_case=recovery_case,
-                transaction=transaction,
-                payment_link=payment_link,
-                captured_payment=payment,
+            # -------------------------------------------------
+            # FULL PAYMENT LINK PAYMENT
+            # -------------------------------------------------
+
+            if (
+                payment_link.get("status")
+                == "paid"
+            ):
+                if payment.get("status") != "captured":
+                    raise ValueError(
+                        "Payment Link reported paid, "
+                        "but webhook payment is not captured."
+                    )
+
+                return self._process_successful_recovery(
+                    action=action,
+                    recovery_case=recovery_case,
+                    transaction=transaction,
+                    payment_link=payment_link,
+                    captured_payment=payment,
+                )
+
+            # -------------------------------------------------
+            # PARTIAL PAYMENT LINK PAYMENT
+            # -------------------------------------------------
+
+            if (
+                payment_link.get("status")
+                == "partially_paid"
+            ):
+                return self._process_partial_recovery(
+                    action=action,
+                    recovery_case=recovery_case,
+                    transaction=transaction,
+                    payment_link=payment_link,
+                    payment=payment,
+                )
+
+            raise ValueError(
+                "Unsupported Payment Link status "
+                f"for webhook reconciliation: "
+                f"{payment_link.get('status')}"
             )
 
         # -------------------------------------------------
         # FALLBACK TO RAZORPAY API
-        # -------------------------------------------------
-        #
-        # This supports manual reconciliation or cases
-        # where the webhook does not contain payment data.
         # -------------------------------------------------
 
         payment_link = (
@@ -157,6 +173,32 @@ class ReconciliationService:
                 captured_payment=captured_payment,
             )
 
+        if payment_link_status == "partially_paid":
+
+            partial_payment = next(
+                (
+                    item
+                    for item in payments
+                    if item.get("status")
+                    in {
+                        "captured",
+                        "authorized",
+                    }
+                ),
+                None,
+            )
+
+            if not partial_payment:
+                return False
+
+            return self._process_partial_recovery(
+                action=action,
+                recovery_case=recovery_case,
+                transaction=transaction,
+                payment_link=payment_link,
+                payment=partial_payment,
+            )
+
         if payment_link_status == "expired":
 
             action.status = "failed"
@@ -180,6 +222,207 @@ class ReconciliationService:
 
         return False
 
+    # =========================================================
+    # PARTIAL RECOVERY
+    # =========================================================
+
+    def _process_partial_recovery(
+        self,
+        action: RecoveryAction,
+        recovery_case: RecoveryCase,
+        transaction: Transaction,
+        payment_link: dict,
+        payment: dict,
+    ) -> bool:
+
+        payment_id = payment.get("id")
+
+        if not payment_id:
+            payment_id = payment.get(
+                "payment_id"
+            )
+
+        if not payment_id:
+            raise ValueError(
+                "Partial payment is missing "
+                "payment_id."
+            )
+
+        amount_paise = int(
+            payment.get(
+                "amount",
+                0,
+            )
+        )
+
+        if amount_paise <= 0:
+            raise ValueError(
+                "Partial payment amount must "
+                "be greater than zero."
+            )
+
+        partial_amount = (
+            Decimal(amount_paise)
+            / Decimal("100")
+        )
+
+        expected_amount = Decimal(
+            str(transaction.amount)
+        )
+
+        existing_recovered = (
+            Decimal(
+                str(
+                    recovery_case.recovered_amount
+                    or Decimal("0.00")
+                )
+            )
+        )
+
+        cumulative_recovered = (
+            existing_recovered
+            + partial_amount
+        )
+
+        if cumulative_recovered > expected_amount:
+            raise ValueError(
+                "Cumulative recovered amount "
+                "cannot exceed transaction amount. "
+                f"Transaction: {expected_amount}, "
+                f"recovered: {cumulative_recovered}."
+            )
+
+        # -------------------------------------------------
+        # FULL RECOVERY THROUGH CUMULATIVE PAYMENTS
+        # -------------------------------------------------
+
+        if cumulative_recovered == expected_amount:
+
+            transaction.status = "captured"
+
+            transaction.razorpay_payment_id = (
+                payment_id
+            )
+
+            transaction.payment_method = (
+                payment.get("method")
+            )
+
+            transaction.failure_code = None
+            transaction.failure_reason = None
+
+            action.status = "successful"
+
+            action.executed_at = (
+                action.executed_at
+                or datetime.now(timezone.utc)
+            )
+
+            action.result = (
+                "Recovery completed through "
+                "cumulative Payment Link payments."
+            )
+
+            action.metadata_json = json.dumps(
+                {
+                    "provider": "razorpay",
+                    "payment_link_id": (
+                        payment_link.get("id")
+                    ),
+                    "payment_id": payment_id,
+                    "payment_status": (
+                        payment.get("status")
+                    ),
+                    "payment_method": (
+                        payment.get("method")
+                    ),
+                    "amount_paid": amount_paise,
+                    "cumulative_recovered": (
+                        int(cumulative_recovered * 100)
+                    ),
+                    "reference_id": (
+                        payment_link.get(
+                            "reference_id"
+                        )
+                    ),
+                }
+            )
+
+            recovery_case.recovered_amount = (
+                cumulative_recovered
+            )
+
+            recovery_case.status = "recovered"
+
+            recovery_case.recovered_at = (
+                recovery_case.recovered_at
+                or datetime.now(timezone.utc)
+            )
+
+            return True
+
+        # -------------------------------------------------
+        # PARTIAL RECOVERY
+        # -------------------------------------------------
+
+        recovery_case.recovered_amount = (
+            cumulative_recovered
+        )
+
+        recovery_case.status = "open"
+
+        recovery_case.recovered_at = None
+
+        action.status = "pending"
+
+        action.result = (
+            "Payment Link was partially paid. "
+            f"Recovered {cumulative_recovered:.2f} "
+            f"of {expected_amount:.2f}; "
+            f"remaining "
+            f"{expected_amount - cumulative_recovered:.2f}."
+        )
+
+        action.metadata_json = json.dumps(
+            {
+                "provider": "razorpay",
+                "payment_link_id": (
+                    payment_link.get("id")
+                ),
+                "payment_id": payment_id,
+                "payment_status": (
+                    payment.get("status")
+                ),
+                "payment_method": (
+                    payment.get("method")
+                ),
+                "last_payment_amount": amount_paise,
+                "cumulative_recovered": (
+                    int(cumulative_recovered * 100)
+                ),
+                "remaining_amount": (
+                    int(
+                        (
+                            expected_amount
+                            - cumulative_recovered
+                        )
+                        * 100
+                    )
+                ),
+                "reference_id": (
+                    payment_link.get(
+                        "reference_id"
+                    )
+                ),
+            }
+        )
+
+        return False
+
+    # =========================================================
+    # FULL RECOVERY
+    # =========================================================
+
     def _process_successful_recovery(
         self,
         action: RecoveryAction,
@@ -189,19 +432,13 @@ class ReconciliationService:
         captured_payment: dict,
     ) -> bool:
 
-        # -------------------------------------------------
-        # VALIDATE PAYMENT STATUS
-        # -------------------------------------------------
-
-        if captured_payment.get("status") != "captured":
+        if captured_payment.get(
+            "status"
+        ) != "captured":
 
             raise ValueError(
                 "Recovery payment is not captured."
             )
-
-        # -------------------------------------------------
-        # VALIDATE AMOUNT
-        # -------------------------------------------------
 
         expected_amount = Decimal(
             str(transaction.amount)
@@ -228,30 +465,20 @@ class ReconciliationService:
                 f"received {paid_amount}."
             )
 
-        # -------------------------------------------------
-        # VALIDATE PAYMENT ID
-        # -------------------------------------------------
-
         payment_id = captured_payment.get(
             "id"
         )
 
-        # Some Razorpay API responses may use payment_id.
         if not payment_id:
             payment_id = captured_payment.get(
                 "payment_id"
             )
 
         if not payment_id:
-
             raise ValueError(
                 "Captured payment is missing "
                 "payment_id."
             )
-
-        # -------------------------------------------------
-        # UPDATE ORIGINAL TRANSACTION
-        # -------------------------------------------------
 
         transaction.status = "captured"
 
@@ -263,15 +490,8 @@ class ReconciliationService:
             captured_payment.get("method")
         )
 
-        # The original failure has already been
-        # preserved in RecoveryCase and audit history.
-
         transaction.failure_code = None
         transaction.failure_reason = None
-
-        # -------------------------------------------------
-        # UPDATE RECOVERY ACTION
-        # -------------------------------------------------
 
         action.status = "successful"
 
@@ -310,6 +530,10 @@ class ReconciliationService:
                     )
                 ),
                 "amount_paid": paid_amount_paise,
+                "cumulative_recovered": (
+                    paid_amount_paise
+                ),
+                "remaining_amount": 0,
                 "reference_id": (
                     payment_link.get(
                         "reference_id"
@@ -317,10 +541,6 @@ class ReconciliationService:
                 ),
             }
         )
-
-        # -------------------------------------------------
-        # UPDATE RECOVERY CASE
-        # -------------------------------------------------
 
         recovery_case.status = "recovered"
 
