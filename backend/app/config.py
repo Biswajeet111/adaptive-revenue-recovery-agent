@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     groq_api_key: str
     groq_decision_model: str 
 
+    recovery_notification_email: str | None = None
+
     model_config = SettingsConfigDict(
         env_file=".env",
         case_sensitive=False,

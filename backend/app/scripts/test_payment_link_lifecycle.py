@@ -43,7 +43,10 @@ def build_payload(
             },
             "payment": {
                 "entity": {
-                    "id": f"pay_PHASE9_{uuid.uuid4().hex[:8]}",
+                    "id": (
+                        f"pay_PHASE9_"
+                        f"{uuid.uuid4().hex[:8]}"
+                    ),
                     "amount": amount_paid,
                     "status": payment_status,
                     "method": "netbanking",
@@ -55,13 +58,17 @@ def build_payload(
 
 def prepare_action(action):
     action.status = "executed"
-    action.executed_at = datetime.now(timezone.utc)
+    action.executed_at = datetime.now(
+        timezone.utc
+    )
 
     action.metadata_json = json.dumps(
         {
             "provider": "razorpay",
             "payment_link_id": TEST_PAYMENT_LINK_ID,
-            "short_url": "https://example.com/phase9-test",
+            "short_url": (
+                "https://example.com/phase9-test"
+            ),
             "status": "created",
             "reference_id": "PHASE9-TEST",
             "expire_by": 9999999999,
@@ -184,7 +191,10 @@ def main():
             == Decimal("40.00")
         )
 
-        assert recovery_case.status == "open"
+        assert (
+            recovery_case.status
+            == "partially_recovered"
+        )
 
         assert transaction.status == "failed"
 
@@ -233,9 +243,11 @@ def main():
         # =====================================================
 
         action.status = "executed"
+
         recovery_case.status = "open"
         recovery_case.recovered_amount = None
         recovery_case.recovered_at = None
+
         transaction.status = "failed"
 
         prepare_action(action)
@@ -252,7 +264,9 @@ def main():
         db.commit()
 
         assert action.status == "failed"
+
         assert recovery_case.status == "open"
+
         assert transaction.status == "failed"
 
         print(
@@ -265,6 +279,12 @@ def main():
         # =====================================================
 
         action.status = "executed"
+
+        recovery_case.status = "open"
+        recovery_case.recovered_amount = None
+        recovery_case.recovered_at = None
+
+        transaction.status = "failed"
 
         prepare_action(action)
 
@@ -280,7 +300,9 @@ def main():
         db.commit()
 
         assert action.status == "failed"
+
         assert recovery_case.status == "open"
+
         assert transaction.status == "failed"
 
         print(

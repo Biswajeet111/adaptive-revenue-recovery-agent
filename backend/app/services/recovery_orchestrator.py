@@ -16,6 +16,18 @@ from backend.app.services.embedding_service import GeminiEmbeddingService
 from backend.app.services.policy_retrieval_service import (
     PolicyRetrievalService,
 )
+from backend.app.services.communication_dispatcher import (
+    CommunicationDispatcher,
+)
+from backend.app.services.communication_recipient import (
+    CommunicationRecipientResolver,
+)
+from backend.app.services.communication_service import (
+    CommunicationService,
+)
+from backend.app.services.communication_trigger import (
+    CommunicationTriggerService,
+)
 from backend.app.services.razorpay_service import RazorpayService
 from backend.app.services.recovery_service import RecoveryService
 
@@ -81,6 +93,21 @@ class RecoveryOrchestrator:
 
         self.executor = RecoveryActionExecutor(
             RazorpayService()
+        )
+
+        self.communication_service = CommunicationService(
+            db=db,
+        )
+        self.communication_dispatcher = CommunicationDispatcher(
+            self.communication_service
+        )
+
+        self.communication_trigger_service = (
+            CommunicationTriggerService()
+        )
+
+        self.communication_recipient_resolver = (
+            CommunicationRecipientResolver()
         )
 
         embedding_service = (
@@ -685,6 +712,37 @@ class RecoveryOrchestrator:
                     recovery_case=recovery_case,
                     transaction=transaction,
                 )
+            )
+
+            self.db.flush()
+
+            # ---------------------------------------------------------
+            # 19. CUSTOMER COMMUNICATION — PAYMENT LINK CREATED
+            # ---------------------------------------------------------
+            #
+            # The executor has successfully created the Payment Link.
+            # Only now is customer communication permitted.
+            #
+            # Communication policy remains authoritative; the
+            # dispatcher does not bypass it.
+            # ---------------------------------------------------------
+
+            payment_link_trigger = (
+                self.communication_trigger_service.payment_link_created(
+                    transaction=transaction,
+                    recovery_case=recovery_case,
+                    recovery_action=executed_action,
+                )
+            )
+
+            self.communication_dispatcher.dispatch(
+                trigger=payment_link_trigger,
+                transaction=transaction,
+                recovery_case=recovery_case,
+                recovery_action=executed_action,
+                recipient_resolver=(
+                    self.communication_recipient_resolver
+                ),
             )
 
             self.db.flush()

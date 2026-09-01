@@ -11,6 +11,18 @@ from backend.app.models.webhook_event import WebhookEvent
 from backend.app.services.reconciliation_service import (
     ReconciliationService,
 )
+from backend.app.services.communication_dispatcher import (
+    CommunicationDispatcher,
+)
+from backend.app.services.communication_recipient import (
+    CommunicationRecipientResolver,
+)
+from backend.app.services.communication_service import (
+    CommunicationService,
+)
+from backend.app.services.communication_trigger import (
+    CommunicationTriggerService,
+)
 from backend.app.services.recovery_service import RecoveryService
 from backend.app.services.razorpay_service import RazorpayService
 
@@ -20,8 +32,47 @@ class WebhookService:
     def __init__(
         self,
         db: Session,
+        *,
+        enable_communications: bool = False,
     ):
         self.db = db
+
+        self.enable_communications = (
+            enable_communications
+        )
+
+        # -----------------------------------------------------
+        # COMMUNICATION LIFECYCLE
+        # -----------------------------------------------------
+
+        self.communication_service = None
+        self.communication_dispatcher = None
+        self.communication_trigger_service = None
+
+        if self.enable_communications:
+
+            self.communication_service = (
+                CommunicationService(
+                    db=db,
+                )
+            )
+
+        self.communication_dispatcher = (
+            CommunicationDispatcher(
+                self.communication_service,
+            )
+        )
+
+        self.communication_trigger_service = (
+            CommunicationTriggerService()
+        )
+
+        # IMPORTANT:
+        # CommunicationRecipientResolver is intentionally
+        # created lazily inside communication branches.
+        #
+        # This prevents unrelated webhook processing/tests
+        # from requiring recovery_notification_email config.
 
     # =========================================================
     # WEBHOOK EVENT STORAGE
@@ -260,7 +311,6 @@ class WebhookService:
         }:
 
             transaction.failure_code = None
-
             transaction.failure_reason = None
 
         # -----------------------------------------------------
@@ -449,13 +499,48 @@ class WebhookService:
                     "but payment entity is missing."
                 )
 
-            reconciliation_service.reconcile_payment_link(
-                action=action,
-                recovery_case=recovery_case,
-                transaction=transaction,
-                payment=payment,
-                payment_link=payment_link,
+            recovery_result = (
+                reconciliation_service
+                .reconcile_payment_link(
+                    action=action,
+                    recovery_case=recovery_case,
+                    transaction=transaction,
+                    payment=payment,
+                    payment_link=payment_link,
+                )
             )
+
+            # -------------------------------------------------
+            # Only confirmed recovery may create a
+            # recovery-success communication.
+            # -------------------------------------------------
+
+            if recovery_result is True:
+
+                if self.enable_communications:
+
+                    recovery_trigger = (
+                        self.communication_trigger_service
+                        .payment_recovered(
+                            transaction=transaction,
+                            recovery_case=recovery_case,
+                            recovery_action=action,
+                        )
+                    )
+
+                    recipient_resolver = (
+                        CommunicationRecipientResolver()
+                    )
+
+                    self.communication_dispatcher.dispatch(
+                        trigger=recovery_trigger,
+                        transaction=transaction,
+                        recovery_case=recovery_case,
+                        recovery_action=action,
+                        recipient_resolver=(
+                            recipient_resolver
+                        ),
+                    )
 
         # =====================================================
         # PAYMENT LINK PARTIALLY PAID
@@ -480,6 +565,58 @@ class WebhookService:
                 payment=payment,
                 payment_link=payment_link,
             )
+
+            # -------------------------------------------------
+            # Reconciliation is authoritative for the
+            # cumulative recovered amount.
+            # -------------------------------------------------
+
+            recovered_amount = (
+                recovery_case.recovered_amount
+            )
+
+            expected_amount = (
+                transaction.amount
+            )
+
+            if recovered_amount is None:
+
+                raise ValueError(
+                    "Partial recovery completed without "
+                    "a recovered amount."
+                )
+
+            remaining_amount = (
+                expected_amount
+                - recovered_amount
+            )
+
+            if self.enable_communications:
+
+                partial_trigger = (
+                    self.communication_trigger_service
+                    .partial_payment_received(
+                        transaction=transaction,
+                        recovery_case=recovery_case,
+                        recovery_action=action,
+                        recovered_amount=recovered_amount,
+                        remaining_amount=remaining_amount,
+                    )
+                )
+
+                recipient_resolver = (
+                    CommunicationRecipientResolver()
+                )
+
+                self.communication_dispatcher.dispatch(
+                    trigger=partial_trigger,
+                    transaction=transaction,
+                    recovery_case=recovery_case,
+                    recovery_action=action,
+                    recipient_resolver=(
+                        recipient_resolver
+                    ),
+                )
 
         # =====================================================
         # PAYMENT LINK EXPIRED
@@ -518,6 +655,7 @@ class WebhookService:
         # =====================================================
 
         else:
+
             return
 
         # -----------------------------------------------------

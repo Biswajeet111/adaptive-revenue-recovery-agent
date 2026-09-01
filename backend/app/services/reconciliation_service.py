@@ -36,12 +36,36 @@ class ReconciliationService:
 
             return True
 
-        if action.status != "executed":
+        # -------------------------------------------------
+        # ACTION STATE
+        # -------------------------------------------------
+        #
+        # "executed" means the Payment Link was created.
+        #
+        # "pending" is also valid here because after a
+        # partial payment the same Payment Link remains
+        # active for the remaining amount.
+        #
+        # We must NOT require the worker to create a new
+        # Payment Link merely because a partial payment
+        # changed the action back to pending.
+        #
+        # Other states remain rejected.
+        # -------------------------------------------------
+
+        if action.status not in {
+            "executed",
+            "pending",
+        }:
             raise ValueError(
                 f"Recovery action {action.id} "
                 f"is not executable for reconciliation. "
                 f"Current status: {action.status}"
             )
+
+        # -------------------------------------------------
+        # PAYMENT LINK METADATA
+        # -------------------------------------------------
 
         if not action.metadata_json:
             raise ValueError(
@@ -53,6 +77,7 @@ class ReconciliationService:
             metadata = json.loads(
                 action.metadata_json
             )
+
         except json.JSONDecodeError as exc:
             raise ValueError(
                 f"Invalid metadata for recovery "
@@ -92,6 +117,7 @@ class ReconciliationService:
                 payment_link.get("status")
                 == "paid"
             ):
+
                 if payment.get("status") != "captured":
                     raise ValueError(
                         "Payment Link reported paid, "
@@ -114,6 +140,7 @@ class ReconciliationService:
                 payment_link.get("status")
                 == "partially_paid"
             ):
+
                 return self._process_partial_recovery(
                     action=action,
                     recovery_case=recovery_case,
@@ -157,6 +184,10 @@ class ReconciliationService:
             None,
         )
 
+        # -------------------------------------------------
+        # FULL PAYMENT
+        # -------------------------------------------------
+
         if payment_link_status == "paid":
 
             if not captured_payment:
@@ -172,6 +203,10 @@ class ReconciliationService:
                 payment_link=payment_link,
                 captured_payment=captured_payment,
             )
+
+        # -------------------------------------------------
+        # PARTIAL PAYMENT
+        # -------------------------------------------------
 
         if payment_link_status == "partially_paid":
 
@@ -199,6 +234,10 @@ class ReconciliationService:
                 payment=partial_payment,
             )
 
+        # -------------------------------------------------
+        # EXPIRED
+        # -------------------------------------------------
+
         if payment_link_status == "expired":
 
             action.status = "failed"
@@ -209,6 +248,10 @@ class ReconciliationService:
             )
 
             return False
+
+        # -------------------------------------------------
+        # CANCELLED
+        # -------------------------------------------------
 
         if payment_link_status == "cancelled":
 
@@ -338,7 +381,10 @@ class ReconciliationService:
                     ),
                     "amount_paid": amount_paise,
                     "cumulative_recovered": (
-                        int(cumulative_recovered * 100)
+                        int(
+                            cumulative_recovered
+                            * 100
+                        )
                     ),
                     "reference_id": (
                         payment_link.get(
@@ -369,9 +415,21 @@ class ReconciliationService:
             cumulative_recovered
         )
 
-        recovery_case.status = "open"
+        recovery_case.status = (
+            "partially_recovered"
+        )
 
         recovery_case.recovered_at = None
+
+        # -------------------------------------------------
+        # IMPORTANT:
+        #
+        # The Payment Link already exists and remains
+        # available for the remaining balance.
+        #
+        # Therefore the action is pending for the next
+        # recovery/payment lifecycle event.
+        # -------------------------------------------------
 
         action.status = "pending"
 
@@ -396,9 +454,14 @@ class ReconciliationService:
                 "payment_method": (
                     payment.get("method")
                 ),
-                "last_payment_amount": amount_paise,
+                "last_payment_amount": (
+                    amount_paise
+                ),
                 "cumulative_recovered": (
-                    int(cumulative_recovered * 100)
+                    int(
+                        cumulative_recovered
+                        * 100
+                    )
                 ),
                 "remaining_amount": (
                     int(
@@ -457,7 +520,6 @@ class ReconciliationService:
         )
 
         if paid_amount != expected_amount:
-
             raise ValueError(
                 "Recovered payment amount does not "
                 "match the transaction amount. "

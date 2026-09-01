@@ -99,7 +99,10 @@ async def razorpay_webhook(
             detail="Missing Razorpay event ID",
         )
 
-    webhook_service = WebhookService(db)
+    webhook_service = WebhookService(
+        db,
+        enable_communications=True,
+    )
 
     # =========================================================
     # 5. EVENT-LEVEL IDEMPOTENCY

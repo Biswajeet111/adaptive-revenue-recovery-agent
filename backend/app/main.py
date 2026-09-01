@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi import Depends
 from sqlalchemy.orm import Session
-
+from backend.app.operations import router as operations_router
 from backend.app.config import settings
 from backend.app.database import get_db
 from backend.app.models.transaction import Transaction
@@ -20,7 +20,7 @@ app = FastAPI(
 )
 
 app.include_router(razorpay_webhook_router)
-
+app.include_router(operations_router)
 @app.get("/")
 def root():
     return {
