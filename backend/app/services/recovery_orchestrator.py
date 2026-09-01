@@ -24,29 +24,30 @@ class RecoveryOrchestrator:
     """
     Coordinates the complete AI revenue-recovery pipeline.
 
-    Flow:
+    Direct execution:
+        pending
+          ↓
+        AI + RAG
+          ↓
+        Safety Gate
+          ↓
+        atomic claim
+          ↓
+        executor
 
-        Recovery Action
-              ↓
-        State validation
-              ↓
-        Transaction context
-              ↓
-        Policy retrieval
-              ↓
-        AI decision
-              ↓
-        Deterministic safety gate
-              ↓
-        Audit provenance
-              ↓
-        Approved action
-              ↓
-        Atomic action claim
-              ↓
-        External execution
-              ↓
-        Webhook / reconciliation
+    Worker execution:
+        worker atomically claims
+          ↓
+        executing
+          ↓
+        AI + RAG
+          ↓
+        Safety Gate
+          ↓
+        executor
+
+    The worker owns the queue-level claim when
+    already_claimed=True.
     """
 
     TERMINAL_CASE_STATES = {
@@ -112,6 +113,7 @@ class RecoveryOrchestrator:
         action: RecoveryAction,
         recovery_case: RecoveryCase,
         transaction: Transaction,
+        already_claimed: bool = False,
     ) -> RecoveryAction:
 
         # =====================================================
@@ -121,8 +123,26 @@ class RecoveryOrchestrator:
         if action.executed_at is not None:
             return action
 
-        if action.status != "pending":
-            return action
+        # -----------------------------------------------------
+        # Direct orchestration requires pending.
+        #
+        # Worker orchestration has already atomically moved
+        # the action to executing.
+        # -----------------------------------------------------
+
+        if already_claimed:
+
+            if action.status != "executing":
+                raise ValueError(
+                    f"Worker claimed action {action.id}, "
+                    f"but current status is "
+                    f"'{action.status}'."
+                )
+
+        else:
+
+            if action.status != "pending":
+                return action
 
         # =====================================================
         # 1. TRANSACTION STATE PROTECTION
@@ -136,6 +156,7 @@ class RecoveryOrchestrator:
             transaction_status
             in self.TERMINAL_TRANSACTION_STATES
         ):
+
             action.status = "failed"
 
             action.result = (
@@ -160,6 +181,7 @@ class RecoveryOrchestrator:
             recovery_case.status
             in self.TERMINAL_CASE_STATES
         ):
+
             action.status = "failed"
 
             action.result = (
@@ -184,6 +206,7 @@ class RecoveryOrchestrator:
         )
 
         if active_action is not None:
+
             action.status = "failed"
 
             action.result = (
@@ -211,6 +234,7 @@ class RecoveryOrchestrator:
             previous_attempts
             >= self.recovery_service.MAX_AUTOMATED_ATTEMPTS
         ):
+
             action.action_type = "manual_review"
             action.status = "failed"
 
@@ -248,6 +272,7 @@ class RecoveryOrchestrator:
         )
 
         if not evidence:
+
             action.status = "failed"
 
             action.result = (
@@ -291,6 +316,7 @@ class RecoveryOrchestrator:
         if existing_audit is not None:
 
             try:
+
                 audit_data = json.loads(
                     existing_audit.metadata_json
                     or "{}"
@@ -316,6 +342,7 @@ class RecoveryOrchestrator:
                 )
 
                 if not same_transaction:
+
                     print(
                         "Existing AI decision belongs to "
                         "another transaction. Generating "
@@ -323,6 +350,7 @@ class RecoveryOrchestrator:
                     )
 
                 else:
+
                     decision = RecoveryDecision(
                         classification=ai_data[
                             "classification"
@@ -362,6 +390,7 @@ class RecoveryOrchestrator:
                 ValueError,
                 json.JSONDecodeError,
             ):
+
                 print(
                     "Existing AI audit could not be "
                     "reconstructed. Generating a new "
@@ -375,6 +404,7 @@ class RecoveryOrchestrator:
         # =====================================================
 
         if decision is None:
+
             decision = self.decision_agent.decide(
                 transaction_context=context,
                 policy_evidence=evidence,
@@ -386,6 +416,7 @@ class RecoveryOrchestrator:
         # =====================================================
 
         try:
+
             validated_decision = (
                 self.ai_service.validate_decision(
                     decision=decision,
@@ -419,6 +450,7 @@ class RecoveryOrchestrator:
             evidence_metadata = []
 
             for item in evidence:
+
                 evidence_metadata.append(
                     {
                         "document_id": (
@@ -547,6 +579,7 @@ class RecoveryOrchestrator:
             action.action_type
             not in self.executor.SUPPORTED_ACTIONS
         ):
+
             action.status = "failed"
 
             action.result = (
@@ -560,7 +593,7 @@ class RecoveryOrchestrator:
             return action
 
         # =====================================================
-        # 15. FINAL STATE CHECK BEFORE CLAIM
+        # 15. FINAL STATE CHECK BEFORE EXECUTION
         # =====================================================
 
         self.db.refresh(transaction)
@@ -573,6 +606,7 @@ class RecoveryOrchestrator:
             ).lower()
             in self.TERMINAL_TRANSACTION_STATES
         ):
+
             action.status = "failed"
 
             action.result = (
@@ -591,6 +625,7 @@ class RecoveryOrchestrator:
             recovery_case.status
             in self.TERMINAL_CASE_STATES
         ):
+
             action.status = "failed"
 
             action.result = (
@@ -620,26 +655,30 @@ class RecoveryOrchestrator:
             return action
 
         # =====================================================
-        # 17. ATOMIC ACTION CLAIM
+        # 17. DIRECT EXECUTION CLAIM
         # =====================================================
 
-        claimed = self._claim_action(
-            action
-        )
+        if not already_claimed:
 
-        if not claimed:
-            print(
-                "Recovery action could not be claimed. "
-                f"Current status: {action.status}"
+            claimed = self._claim_action(
+                action
             )
 
-            return action
+            if not claimed:
+
+                print(
+                    "Recovery action could not be claimed. "
+                    f"Current status: {action.status}"
+                )
+
+                return action
 
         # =====================================================
         # 18. EXECUTE APPROVED ACTION
         # =====================================================
 
         try:
+
             executed_action = (
                 self.executor.execute(
                     action=action,
@@ -653,7 +692,9 @@ class RecoveryOrchestrator:
             return executed_action
 
         except Exception:
+
             self.db.flush()
+
             raise
 
     # =========================================================
@@ -674,10 +715,12 @@ class RecoveryOrchestrator:
         statement = (
             update(RecoveryAction)
             .where(
-                RecoveryAction.id == action.id
+                RecoveryAction.id
+                == action.id
             )
             .where(
-                RecoveryAction.status == "pending"
+                RecoveryAction.status
+                == "pending"
             )
             .values(
                 status="executing"
@@ -689,6 +732,7 @@ class RecoveryOrchestrator:
         )
 
         if result.rowcount != 1:
+
             self.db.refresh(action)
 
             return False

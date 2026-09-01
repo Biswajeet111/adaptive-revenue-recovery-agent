@@ -266,6 +266,7 @@ class RecoveryWorker:
                 action=action,
                 recovery_case=recovery_case,
                 transaction=transaction,
+                already_claimed=True,   
             )
 
             execution_duration = (
