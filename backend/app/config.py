@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     gemini_embedding_model: str = "gemini-embedding-001"
 
     groq_api_key: str
-    groq_decision_model: str 
+    groq_decision_model: str
 
     recovery_notification_email: str | None = None
     smtp_host: str = ""
@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     smtp_use_tls: bool = True
 
     operations_api_key: str = ""
+
+    cors_allowed_origins: str = (
+        "http://localhost:5173,http://127.0.0.1:5173"
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",

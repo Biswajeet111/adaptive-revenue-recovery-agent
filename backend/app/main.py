@@ -22,17 +22,19 @@ app = FastAPI(
 )
 
 
+allowed_origins = [
+    origin.strip()
+    for origin in settings.cors_allowed_origins.split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=allowed_origins,
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type"],
 )
-
 
 app.include_router(razorpay_webhook_router)
 app.include_router(operations_router)
@@ -49,26 +51,17 @@ def root():
 
 @app.get("/health")
 def health_check():
-    return {
-        "status": "healthy",
-    }
+    return {"status": "healthy"}
 
 
 @app.get("/checkout", response_class=HTMLResponse)
 def checkout_page():
-    checkout_file = (
-        Path(__file__).parent / "templates" / "checkout.html"
-    )
-
-    return checkout_file.read_text(
-        encoding="utf-8"
-    )
+    checkout_file = Path(__file__).parent / "templates" / "checkout.html"
+    return checkout_file.read_text(encoding="utf-8")
 
 
 @app.post("/api/v1/checkout/order")
-def create_checkout_order(
-    db: Session = Depends(get_db),
-):
+def create_checkout_order(db: Session = Depends(get_db)):
     amount_paise = 10000
 
     razorpay_service = RazorpayService()
