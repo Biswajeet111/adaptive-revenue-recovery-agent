@@ -13,7 +13,6 @@ from backend.app.services.recovery_orchestrator import (
 
 
 class RecoveryWorker:
-
     LEASE_SECONDS = 300
     MAX_ATTEMPTS = 3
 
@@ -32,7 +31,13 @@ class RecoveryWorker:
     # =========================================================
 
     def recover_stale_actions(self) -> int:
+        """
+        Recover actions whose worker lease has expired.
 
+        If the action has already exhausted its retry budget,
+        it is permanently failed instead of being returned to
+        the pending queue.
+        """
         now = datetime.now(timezone.utc)
 
         statement = (
@@ -52,14 +57,43 @@ class RecoveryWorker:
 
         self.db.commit()
 
-        return result.rowcount
+        pending_recovered = result.rowcount
+
+        # -----------------------------------------------------
+        # SAFETY: stale actions that exhausted retries must
+        # never be returned to the executable queue.
+        # -----------------------------------------------------
+
+        exhausted_statement = (
+            update(RecoveryAction)
+            .where(
+                RecoveryAction.status == "pending",
+                RecoveryAction.attempt_count >= self.MAX_ATTEMPTS,
+            )
+            .values(
+                status="failed",
+                lease_until=None,
+                result=(
+                    "Recovery action permanently failed after "
+                    f"{self.MAX_ATTEMPTS} attempts. "
+                    "Worker lease expired after the final attempt."
+                ),
+            )
+        )
+
+        exhausted_result = self.db.execute(
+            exhausted_statement
+        )
+
+        self.db.commit()
+
+        return pending_recovered - exhausted_result.rowcount
 
     # =========================================================
     # DISCOVER PENDING ACTIONS
     # =========================================================
 
     def get_pending_action_ids(self) -> list[int]:
-
         now = datetime.now(timezone.utc)
 
         statement = (
@@ -75,6 +109,9 @@ class RecoveryWorker:
                 (
                     RecoveryAction.scheduled_at <= now
                 )
+            )
+            .where(
+                RecoveryAction.attempt_count < self.MAX_ATTEMPTS
             )
             .order_by(
                 RecoveryAction.id.asc()
@@ -94,7 +131,6 @@ class RecoveryWorker:
         self,
         action_id: int,
     ) -> RecoveryAction | None:
-
         now = datetime.now(timezone.utc)
 
         lease_until = (
@@ -109,6 +145,8 @@ class RecoveryWorker:
             .where(
                 RecoveryAction.id == action_id,
                 RecoveryAction.status == "pending",
+                RecoveryAction.attempt_count
+                < self.MAX_ATTEMPTS,
             )
             .values(
                 status="executing",
@@ -128,9 +166,7 @@ class RecoveryWorker:
         )
 
         if claimed_id is None:
-
             self.db.rollback()
-
             return None
 
         self.db.commit()
@@ -150,7 +186,6 @@ class RecoveryWorker:
         action_id: int,
         error: Exception,
     ) -> None:
-
         action = self.db.scalar(
             select(RecoveryAction).where(
                 RecoveryAction.id == action_id
@@ -163,7 +198,6 @@ class RecoveryWorker:
         action.lease_until = None
 
         if action.attempt_count >= self.MAX_ATTEMPTS:
-
             action.status = "failed"
 
             action.result = (
@@ -173,7 +207,6 @@ class RecoveryWorker:
             )
 
         else:
-
             action.status = "pending"
 
             action.result = (
@@ -193,13 +226,11 @@ class RecoveryWorker:
         self,
         action_id: int,
     ) -> bool:
-
         action = self.claim_action(
             action_id
         )
 
         if action is None:
-
             print(
                 f"Action {action_id} was already "
                 "claimed by another worker."
@@ -220,7 +251,6 @@ class RecoveryWorker:
         )
 
         if recovery_case is None:
-
             self.handle_failure(
                 action_id,
                 ValueError(
@@ -238,7 +268,6 @@ class RecoveryWorker:
         )
 
         if transaction is None:
-
             self.handle_failure(
                 action_id,
                 ValueError(
@@ -251,7 +280,6 @@ class RecoveryWorker:
         execution_started = time.perf_counter()
 
         try:
-
             orchestrator = RecoveryOrchestrator(
                 db=self.db,
                 dry_run=self.dry_run,
@@ -266,7 +294,7 @@ class RecoveryWorker:
                 action=action,
                 recovery_case=recovery_case,
                 transaction=transaction,
-                already_claimed=True,   
+                already_claimed=True,
             )
 
             execution_duration = (
@@ -275,7 +303,6 @@ class RecoveryWorker:
             )
 
             if self.dry_run:
-
                 action.status = "pending"
 
                 action.attempt_count = max(
@@ -287,7 +314,6 @@ class RecoveryWorker:
                 action.lease_until = None
 
             else:
-
                 action.lease_until = None
 
             self.db.commit()
@@ -305,7 +331,6 @@ class RecoveryWorker:
             return True
 
         except Exception as exc:
-
             execution_duration = (
                 time.perf_counter()
                 - execution_started
@@ -335,23 +360,48 @@ class RecoveryWorker:
     # =========================================================
 
     def run_once(self) -> dict:
-
         cycle_started = time.perf_counter()
 
-        stale_recovered = (
-            self.recover_stale_actions()
-        )
+        try:
+            stale_recovered = (
+                self.recover_stale_actions()
+            )
 
-        action_ids = (
-            self.get_pending_action_ids()
-        )
+            action_ids = (
+                self.get_pending_action_ids()
+            )
+
+        except Exception as exc:
+            self.db.rollback()
+
+            cycle_duration = (
+                time.perf_counter()
+                - cycle_started
+            )
+
+            print(
+                "Worker cycle failed during "
+                f"discovery/recovery: {exc}"
+            )
+
+            return {
+                "found": 0,
+                "stale_recovered": 0,
+                "claimed": 0,
+                "processed": 0,
+                "failed": 0,
+                "duration_seconds": round(
+                    cycle_duration,
+                    3,
+                ),
+                "error": str(exc),
+            }
 
         claimed = 0
         processed = 0
         failed = 0
 
         for action_id in action_ids:
-
             print(
                 f"Worker attempting to process "
                 f"recovery action {action_id}"
@@ -362,12 +412,10 @@ class RecoveryWorker:
             )
 
             if success:
-
                 claimed += 1
                 processed += 1
 
             else:
-
                 action = self.db.scalar(
                     select(RecoveryAction).where(
                         RecoveryAction.id == action_id
@@ -378,7 +426,6 @@ class RecoveryWorker:
                     action is not None
                     and action.status == "failed"
                 ):
-
                     failed += 1
 
         cycle_duration = (

@@ -1285,3 +1285,55 @@ I would **not** put `Phase 11.9 = 100%` in the README until the current `test_re
 Also, your current database already contains the `communications` table, and the operations API is exposing communications, which supports treating the communication layer as implemented rather than starting Phase 11 from zero.
 
 And I am keeping your explicit constraint in mind for this project: **do not modify unrelated files and do not run the Gemini tests.**
+
+Final Phase 13 plan
+
+I'd now adjust our remaining roadmap to:
+
+13.1 Configuration hardening          ✅
+13.2 API security                     ✅
+13.3 Worker reliability              ✅
+13.4 Database/concurrency             ✅
+13.5 Observability                    ✅
+
+13.6 React + Vite Dashboard           ← NOW
+13.7 Production Deployment
+13.8 End-to-End Live Demonstration
+13.9 Final Regression
+13.10 GitHub Release Checkpoint
+
+And 13.8 is important.
+
+We'll actually verify the complete chain:
+
+Frontend
+   ↓
+Backend
+   ↓
+Database
+   ↓
+Recovery Engine
+   ↓
+AI Decision
+   ↓
+Payment Execution
+   ↓
+Razorpay
+   ↓
+Webhook
+   ↓
+Reconciliation
+   ↓
+Communication
+   ↓
+Dashboard
+
+So yes—I strongly recommend proceeding with React + Vite now.
+
+The goal from this point shouldn't be “add a frontend.”
+
+It should be:
+
+Turn the already-built recovery engine into a publicly demonstrable, end-to-end SaaS product that a judge can open, understand, interact with, and verify.
+
+That is a much stronger finish to this project.

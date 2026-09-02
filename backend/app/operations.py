@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from backend.app.security import require_operations_api_key
 from sqlalchemy.orm import Session
 
 from backend.app.database import get_db
@@ -10,6 +11,7 @@ from backend.app.services.operations_service import (
 router = APIRouter(
     prefix="/api/v1/operations",
     tags=["Operations"],
+    dependencies=[Depends(require_operations_api_key)],
 )
 
 

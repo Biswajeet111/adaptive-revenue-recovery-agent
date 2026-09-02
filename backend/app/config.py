@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     smtp_from_email: str = ""
     smtp_use_tls: bool = True
 
+    operations_api_key: str = ""
+
     model_config = SettingsConfigDict(
         env_file=".env",
         case_sensitive=False,

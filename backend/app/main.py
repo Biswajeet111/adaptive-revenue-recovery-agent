@@ -1,16 +1,18 @@
-from fastapi import FastAPI
-from backend.app.webhooks.razorpay import router as razorpay_webhook_router
-from backend.app.services.razorpay_service import RazorpayService
 from decimal import Decimal
-from fastapi.responses import HTMLResponse
 from pathlib import Path
 
-from fastapi import Depends
+from fastapi import Depends, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
-from backend.app.operations import router as operations_router
+
 from backend.app.config import settings
+from backend.app.dashboard import router as dashboard_router
 from backend.app.database import get_db
 from backend.app.models.transaction import Transaction
+from backend.app.operations import router as operations_router
+from backend.app.services.razorpay_service import RazorpayService
+from backend.app.webhooks.razorpay import router as razorpay_webhook_router
 
 
 app = FastAPI(
@@ -19,8 +21,24 @@ app = FastAPI(
     version="0.1.0",
 )
 
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type"],
+)
+
+
 app.include_router(razorpay_webhook_router)
 app.include_router(operations_router)
+app.include_router(dashboard_router)
+
+
 @app.get("/")
 def root():
     return {
@@ -45,6 +63,7 @@ def checkout_page():
     return checkout_file.read_text(
         encoding="utf-8"
     )
+
 
 @app.post("/api/v1/checkout/order")
 def create_checkout_order(
