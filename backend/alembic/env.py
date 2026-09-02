@@ -5,7 +5,6 @@ from sqlalchemy import engine_from_config, pool
 
 from backend.app.config import settings
 from backend.app.database import Base
-from backend.app.models import AuditLog, Transaction, WebhookEvent
 
 from backend.app.models import (
     AuditLog,
@@ -14,22 +13,38 @@ from backend.app.models import (
     Transaction,
     WebhookEvent,
 )
+from backend.app.models.communication import Communication
 
 config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
+database_url = settings.database_url
+
+if database_url.startswith("postgres://"):
+    database_url = database_url.replace(
+        "postgres://",
+        "postgresql+psycopg://",
+        1,
+    )
+elif database_url.startswith("postgresql://"):
+    database_url = database_url.replace(
+        "postgresql://",
+        "postgresql+psycopg://",
+        1,
+    )
+
 config.set_main_option(
     "sqlalchemy.url",
-    settings.database_url.replace("%", "%%"),
+    database_url.replace("%", "%%"),
 )
 
 target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
-    url = settings.database_url
+    url = database_url
 
     context.configure(
         url=url,

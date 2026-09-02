@@ -20,7 +20,7 @@ class Communication(Base):
     __table_args__ = (
         UniqueConstraint(
             "idempotency_key",
-            name="uq_communications_idempotency_key",
+            name="communications_idempotency_key_key",
         ),
     )
 
