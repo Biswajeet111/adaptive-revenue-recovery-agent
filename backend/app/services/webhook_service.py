@@ -23,6 +23,9 @@ from backend.app.services.communication_service import (
 from backend.app.services.communication_trigger import (
     CommunicationTriggerService,
 )
+from backend.app.services.communication_provider_factory import (
+    build_communication_providers,
+)
 from backend.app.services.recovery_service import RecoveryService
 from backend.app.services.razorpay_service import RazorpayService
 
@@ -54,18 +57,19 @@ class WebhookService:
             self.communication_service = (
                 CommunicationService(
                     db=db,
+                    providers=build_communication_providers(),
                 )
             )
 
-        self.communication_dispatcher = (
-            CommunicationDispatcher(
-                self.communication_service,
+            self.communication_dispatcher = (
+                CommunicationDispatcher(
+                    self.communication_service,
+                )
             )
-        )
 
-        self.communication_trigger_service = (
-            CommunicationTriggerService()
-        )
+            self.communication_trigger_service = (
+                CommunicationTriggerService()
+            )
 
         # IMPORTANT:
         # CommunicationRecipientResolver is intentionally

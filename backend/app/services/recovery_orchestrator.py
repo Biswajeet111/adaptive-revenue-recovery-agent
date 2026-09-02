@@ -28,6 +28,9 @@ from backend.app.services.communication_service import (
 from backend.app.services.communication_trigger import (
     CommunicationTriggerService,
 )
+from backend.app.services.communication_provider_factory import (
+    build_communication_providers,
+)
 from backend.app.services.razorpay_service import RazorpayService
 from backend.app.services.recovery_service import RecoveryService
 
@@ -97,6 +100,7 @@ class RecoveryOrchestrator:
 
         self.communication_service = CommunicationService(
             db=db,
+            providers=build_communication_providers(),
         )
         self.communication_dispatcher = CommunicationDispatcher(
             self.communication_service
